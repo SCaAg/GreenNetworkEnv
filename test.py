@@ -11,6 +11,12 @@ from gymnasium import Env
 import gymnasium as gym
 from astropy import units as u
 import astropy.units as apu
+import pygame
+import math
+import sys
+
+SCREEN_WIDTH = 800  # in pixels
+SCREEN_HEIGHT = 800  # in pixels
 TIME_SLOT = 10  # in second
 SOLAR = [0, 0, 0, 0, 0, 0, 0.0582, 0.8613, 2.308, 3.2245, 3.8713, 4.3433, 4.4567, 4.0858,
          3.3962, 2.4, 0.9011, 0.7908, 0.0613, 0, 0, 0, 0, 0]  # 24小时中,每个小时太阳能功率的数据 in kW
@@ -358,7 +364,7 @@ class MicroBaseStation(BaseStation):
 
 
 class CommunicationEnv(Env):
-    metadata = {'render_modes': ['None']}
+    metadata = {'render_modes': ['None', 'human']}
 
     def __init__(self, render_mode=None):
         self.current_step = 0
@@ -375,7 +381,7 @@ class CommunicationEnv(Env):
             )
         ues = [
             UserEquipment(speed=1, snr_threshold=0, noise=-90, height=1.5)
-            for _ in range(100)
+            for _ in range(20)
         ]
         self.micro_stations = [station for station in stations if isinstance(station, MicroBaseStation)]
         self.macro_station = next(station for station in stations if isinstance(station, MacroBaseStation))
@@ -396,6 +402,33 @@ class CommunicationEnv(Env):
 
         self.stations: dict[UUID, BaseStation] = {station.bs_uuid: station for station in stations}
         self.ues: dict[UUID, UserEquipment] = {ue.ue_uuid: ue for ue in ues}
+
+        if self.render_mode == 'human':
+            # Initialize pygame
+            pygame.init()
+            self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+            pygame.display.set_caption("Communication Environment")
+            self.clock = pygame.time.Clock()
+
+            # For mapping positions to screen coordinates
+            self.scale_x = SCREEN_WIDTH / MAP_WIDTH
+            self.scale_y = SCREEN_HEIGHT / MAP_HEIGHT
+
+            # Create a background surface
+            self.background = pygame.Surface(self.screen.get_size())
+            self.background = self.background.convert()
+            self.background.fill((255, 255, 255))  # White background
+
+            # Draw the macro base station as red dot on the background
+            macro_pos = self.macro_station.position
+            macro_screen_pos = self._map_to_screen(macro_pos)
+            pygame.draw.circle(self.background, (255, 0, 0), macro_screen_pos, 5)  # Radius 5 pixels
+
+            # Draw micro base stations as blue dots on the background
+            for station in self.micro_stations:
+                micro_pos = station.position
+                micro_screen_pos = self._map_to_screen(micro_pos)
+                pygame.draw.circle(self.background, (0, 0, 255), micro_screen_pos, 5)  # Radius 5 pixels
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -519,6 +552,9 @@ class CommunicationEnv(Env):
         # 14. 更新当前步数
         self.current_step += 1
 
+        if self.render_mode == 'human':
+            self.render()
+
         return obs, reward, done, info
 
     def _get_obs(self):
@@ -548,6 +584,60 @@ class CommunicationEnv(Env):
             "battery_level": np.array(battery_levels, dtype=np.float32),
             "sbs_status": np.array(sbs_status, dtype=np.int32)
         }
+
+    def render(self):
+        # Handle events
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.close()
+                sys.exit()
+
+        # Blit the background onto the screen
+        self.screen.blit(self.background, (0, 0))
+
+        # If micro base stations' active status changes and you need to update them:
+        for station in self.micro_stations:
+            micro_pos = station.position
+            micro_screen_pos = self._map_to_screen(micro_pos)
+            if station.active:
+                # Draw active stations over the background
+                pygame.draw.circle(self.screen, (0, 0, 255), micro_screen_pos, 5)
+            else:
+                # Optionally, draw inactive stations differently or not at all
+                pygame.draw.circle(self.screen, (200, 200, 200), micro_screen_pos, 5)  # Light gray for inactive
+
+        # Draw UEs as stars (dynamic elements)
+        for ue in self.ues.values():
+            ue_pos = ue.position
+            ue_screen_pos = self._map_to_screen(ue_pos)
+            self._draw_star(ue_screen_pos, 5, (0, 255, 0))  # Size 5 pixels, color green
+
+        # Update the display
+        pygame.display.flip()
+
+        # Limit to 60 frames per second
+        self.clock.tick(60)
+
+
+    def _map_to_screen(self, pos):
+        x = int(pos[0] * self.scale_x)
+        y = int(pos[1] * self.scale_y)
+        y = SCREEN_HEIGHT - y
+        return (x, y)
+
+    def _draw_star(self, position, size, color):
+        x, y = position
+        points = []
+        for i in range(5):
+            angle = i * (2 * math.pi / 5) - math.pi / 2
+            x_i = x + size * math.cos(angle)
+            y_i = y + size * math.sin(angle)
+            points.append((x_i, y_i))
+        pygame.draw.polygon(self.screen, color, points)
+
+    def close(self):
+        if self.render_mode == 'human':
+            pygame.quit()
 
 
 class UserEquipment:
