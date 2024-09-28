@@ -373,9 +373,16 @@ class CommunicationEnv(Env):
         stations = [
             MacroBaseStation((1000, 1000), bandwidth=100, frequency=3.5, trans_power=46, height=30, const_power=500),
         ]
-        # Place micro base stations at random positions
-        for _ in range(6):
-            position = (uniform(0, MAP_WIDTH), uniform(0, MAP_HEIGHT))
+        # 计算地图中心
+        center_x, center_y = MAP_WIDTH / 2, MAP_HEIGHT / 2
+        # 计算六边形的半径（从中心到顶点的距离）
+        radius = min(MAP_WIDTH, MAP_HEIGHT) / 3
+        # 生成六边形的顶点
+        for i in range(6):
+            angle = 2 * math.pi * i / 6
+            x = center_x + radius * math.cos(angle)
+            y = center_y + radius * math.sin(angle)
+            position = (x, y)
             stations.append(
                 MicroBaseStation(position, bandwidth=100, frequency=3.5, trans_power=30, height=10, const_power=50)
             )
@@ -404,46 +411,46 @@ class CommunicationEnv(Env):
         self.ues: dict[UUID, UserEquipment] = {ue.ue_uuid: ue for ue in ues}
 
         if self.render_mode == 'human':
-            # Initialize pygame
+            # 初始化pygame
             pygame.init()
             self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-            pygame.display.set_caption("Communication Environment")
+            pygame.display.set_caption("通信环境")
             self.clock = pygame.time.Clock()
 
-            # For mapping positions to screen coordinates
+            # 用于将位置映射到屏幕坐标
             self.scale_x = SCREEN_WIDTH / MAP_WIDTH
             self.scale_y = SCREEN_HEIGHT / MAP_HEIGHT
 
-            # Create a background surface
+            # 创建背景表面
             self.background = pygame.Surface(self.screen.get_size())
             self.background = self.background.convert()
-            self.background.fill((255, 255, 255))  # White background
+            self.background.fill((255, 255, 255))  # 白色背景
 
-            # Draw the macro base station as red dot on the background
+            # 在背景上绘制宏基站为红点
             macro_pos = self.macro_station.position
             macro_screen_pos = self._map_to_screen(macro_pos)
-            pygame.draw.circle(self.background, (255, 0, 0), macro_screen_pos, 5)  # Radius 5 pixels
+            pygame.draw.circle(self.background, (255, 0, 0), macro_screen_pos, 5)  # 半径5像素
 
-            # Draw micro base stations as blue dots on the background
+            # 在背景上绘制微基站为蓝点
             for station in self.micro_stations:
                 micro_pos = station.position
                 micro_screen_pos = self._map_to_screen(micro_pos)
-                pygame.draw.circle(self.background, (0, 0, 255), micro_screen_pos, 5)  # Radius 5 pixels
+                pygame.draw.circle(self.background, (0, 0, 255), micro_screen_pos, 5)  # 半径5像素
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         # np.random.seed(seed)
-        # Reset the positions of UEs
+        # 重置UE的位置
         self.current_step = 0
 
         for ue in self.ues.values():
             ue.reset()
 
-        # Reset the micro base stations
+        # 重置微基站
         for station in self.stations.values():
             station.reset()
 
-        # Return the initial observation
+        # 返回初始观察
         return self._get_obs()
 
     def step(self, action):
@@ -505,13 +512,13 @@ class CommunicationEnv(Env):
         # 8. 移动用户
         for ue in self.ues.values():
             ue.move()
-            # Check boundaries and reflect direction if necessary
+            # 检查边界并在必要时反射方向
             if ue.position[0] < 0 or ue.position[0] > MAP_WIDTH:
                 ue.position[0] = np.clip(ue.position[0], 0, MAP_WIDTH)
-                ue.direction = np.pi - ue.direction  # Reflect over y-axis
+                ue.direction = np.pi - ue.direction  # 在y轴上反射
             if ue.position[1] < 0 or ue.position[1] > MAP_HEIGHT:
                 ue.position[1] = np.clip(ue.position[1], 0, MAP_HEIGHT)
-                ue.direction = -ue.direction  # Reflect over x-axis
+                ue.direction = -ue.direction  # 在x轴上反射
 
         # 9. 重新计算用户连接
         # 这段代码用于重新计算用户连接
@@ -586,36 +593,42 @@ class CommunicationEnv(Env):
         }
 
     def render(self):
-        # Handle events
+        # 处理事件
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.close()
                 sys.exit()
 
-        # Blit the background onto the screen
+        # 将背景绘制到屏幕上
         self.screen.blit(self.background, (0, 0))
 
-        # If micro base stations' active status changes and you need to update them:
+        # 如果微基站的活动状态发生变化，需要更新它们：
         for station in self.micro_stations:
             micro_pos = station.position
             micro_screen_pos = self._map_to_screen(micro_pos)
             if station.active:
-                # Draw active stations over the background
+                # 在背景上绘制活动的基站
                 pygame.draw.circle(self.screen, (0, 0, 255), micro_screen_pos, 5)
             else:
-                # Optionally, draw inactive stations differently or not at all
-                pygame.draw.circle(self.screen, (200, 200, 200), micro_screen_pos, 5)  # Light gray for inactive
+                # 可选地，以不同方式绘制非活动基站或不绘制
+                pygame.draw.circle(self.screen, (200, 200, 200), micro_screen_pos, 5)  # 非活动基站为浅灰色
 
-        # Draw UEs as stars (dynamic elements)
+        # 将UE绘制为星形（动态元素）
         for ue in self.ues.values():
             ue_pos = ue.position
             ue_screen_pos = self._map_to_screen(ue_pos)
-            self._draw_star(ue_screen_pos, 5, (0, 255, 0))  # Size 5 pixels, color green
+            self._draw_star(ue_screen_pos, 5, (0, 255, 0))  # 大小为5像素，颜色为绿色
 
-        # Update the display
+            # 绘制UE和其连接基站之间的线
+            for station in self.stations.values():
+                if ue in station.connected_ues:
+                    station_pos = self._map_to_screen(station.position)
+                    pygame.draw.line(self.screen, (255, 0, 0), ue_screen_pos, station_pos, 1)  # 红色线，宽度为1像素
+
+        # 更新显示
         pygame.display.flip()
 
-        # Limit to 60 frames per second
+        # 限制帧率为60帧每秒
         self.clock.tick(60)
 
 
