@@ -18,9 +18,9 @@ import sys
 SCREEN_WIDTH = 800  # 像素
 SCREEN_HEIGHT = 800  # 像素
 TIME_SLOT = 10  # 秒
-SOLAR = [0, 0, 0, 0, 0, 0, 0.0582, 0.8613, 2.308, 3.2245, 3.8713, 4.3433, 4.4567, 4.0858,
-         3.3962, 2.4, 0.9011, 0.7908, 0.0613, 0, 0, 0, 0, 0]  # 24小时中,每个小时太阳能功率的数据,单位:kW
-CHOSEN_HOUR = 1
+SOLAR = [0, 0, 0, 0, 0, 0, 0.00582, 0.08613, 0.2308, 0.32245, 0.4713, 0.43433, 0.44567, 0.40858,
+         0.33962, 0.24, 0.09011, 0.07908, 0.00613, 0, 0, 0, 0, 0]  # 24小时中,每个小时太阳能功率的数据,单位:kW
+CHOSEN_HOUR = 0
 MAP_WIDTH = 2000  # 米
 MAP_HEIGHT = 2000  # 米
 GRID_PRICE = 1  # $/kWh
@@ -127,7 +127,7 @@ class BaseStation(ABC):
         返回:
         - 基站在指定时间片内的总能量消耗,单位为千瓦时 (kWh)。
         """
-        ue_nums = len(self.connected_ues)
+        ue_nums = len(self.connected_ues)*20 # 这里乘以20，是因为每个UE代表20个实际UE
         trans_power_kw = 10 ** ((self.trans_power - 30) / 10) / 1000
         consumption = (self.const_power + trans_power_kw * ue_nums) * TIME_SLOT / 3600
         return consumption
@@ -248,7 +248,7 @@ class MicroBaseStation(BaseStation):
                  trans_power: float,
                  height: float,
                  const_power: float,
-                 battery_capacity: float=100):
+                 battery_capacity: float=6):
         """
         初始化微型基站对象。
 
@@ -268,7 +268,7 @@ class MicroBaseStation(BaseStation):
                          height,
                          const_power)
         self.active: bool = True
-        self.battery_level: float = 0
+        self.battery_level:float = np.random.uniform(0.3, 1.0)
         """单位: 百分比"""
         self.needed_energy: float = 0
         self.battery_capacity: float = battery_capacity
@@ -333,7 +333,7 @@ class MicroBaseStation(BaseStation):
         """
         重置微型基站的状态,当前的实现是将电池电量随机设置为30%到100%之间,将需要能量的标志设置为False,将获得的能量设置为0,将活动状态设置为True。
         """
-        self.battery_level = np.random.uniform(0.3, 1.0)
+        self.battery_level = np.random.uniform(0, 1)
         self.needed_energy = 0
         self.active = True
 
@@ -371,7 +371,7 @@ class CommunicationEnv(Env):
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
         stations = [
-            MacroBaseStation((1000, 1000), bandwidth=100, frequency=3.5, trans_power=46, height=30, const_power=500),
+            MacroBaseStation((1000, 1000), bandwidth=1e8, frequency=3.5, trans_power=46, height=30, const_power=1.2),
         ]
         # 计算地图中心
         center_x, center_y = MAP_WIDTH / 2, MAP_HEIGHT / 2
@@ -384,10 +384,10 @@ class CommunicationEnv(Env):
             y = center_y + radius * math.sin(angle)
             position = (x, y)
             stations.append(
-                MicroBaseStation(position, bandwidth=100, frequency=3.5, trans_power=30, height=10, const_power=50)
+                MicroBaseStation(position, bandwidth=1e8, frequency=3.5, trans_power=30, height=10, const_power=0.1)
             )
         ues = [
-            UserEquipment(speed=1, snr_threshold=0, noise=-90, height=1.5)
+            UserEquipment(snr_threshold=20, noise=-100, height=1.5)
             for _ in range(20)
         ]
         self.micro_stations = [station for station in stations if isinstance(station, MicroBaseStation)]
@@ -439,6 +439,8 @@ class CommunicationEnv(Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        global CHOSEN_HOUR  # 告诉Python这是一个全局变量
+        CHOSEN_HOUR = CHOSEN_HOUR+1 if CHOSEN_HOUR < 23 else 0
         # np.random.seed(seed)
         # 重置UE的位置
         self.current_step = 0
@@ -464,7 +466,7 @@ class CommunicationEnv(Env):
         ]
 
         # 2. 计算切换惩罚
-        switch_penalty = sum(old != new for old, new in zip(last_sbs_status, new_sbs_status))
+        switch_penalty = sum(old != new for old, new in zip(last_sbs_status, new_sbs_status))*1e-2
 
         # 3. 更新基站状态
         for i, station in enumerate(self.micro_stations):
@@ -536,27 +538,28 @@ class CommunicationEnv(Env):
             else:
                 # 如果没有可用的基站，可以记录日志或采取其他适当的措施
                 print(f"警告：用户设备 {ue.ue_uuid} 没有可用的基站连接")
+        
+        # 10. 计算电价
+        electricity_price = total_energy_consumption*1.65
 
+        # 11. 计算奖励
+        reward = -electricity_price - switch_penalty
 
-
-
-        # 10. 计算奖励
-        reward = -total_energy_consumption - switch_penalty
-
-        # 11. 更新观察
+        # 12. 更新观察
         obs = self._get_obs()
 
-        # 12. 检查是否结束(这里假设模拟时间为 1 小时)
+        # 13. 检查是否结束(这里假设模拟时间为 1 小时)
         done = self.current_step >= 3600 // TIME_SLOT
 
-        # 13. 准备信息字典
+        # 14. 准备信息字典
         info = {
             'total_energy_consumption': total_energy_consumption,
             'switch_penalty': switch_penalty,
+            'electricity_price': electricity_price,
             'macro_energy_saved': total_extra_energy
         }
 
-        # 14. 更新当前步数
+        # 15. 更新当前步数
         self.current_step += 1
 
         if self.render_mode == 'human':
@@ -655,12 +658,11 @@ class CommunicationEnv(Env):
 
 class UserEquipment:
     def __init__(self,
-                 speed: float,
                  snr_threshold: float,
                  noise: float,
                  height: float):
         self.ue_uuid: UUID = uuid1()
-        self.speed: float = speed
+        self.speed: float = uniform(0.5, 5) # m/s
         self.snr_threshold: float = snr_threshold
         """in dB    """
         self.noise: float = noise
@@ -718,6 +720,7 @@ class UserEquipment:
         return {bs for bs in stations if self.check_connectivity(bs)}
 
     def reset(self):
+        self.speed = uniform(0.5, 5) # m/s  
         self.position = np.array([uniform(0, MAP_WIDTH), uniform(0, MAP_HEIGHT)])
         self.direction = uniform(0, 2 * np.pi)
 
