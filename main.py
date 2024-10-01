@@ -8,7 +8,7 @@ from torch.distributions import Bernoulli
 import matplotlib.pyplot as plt
 
 # Import your custom environment
-from test import CommunicationEnv
+from com_env import CommunicationEnv
 
 # Define the PPO agent
 class PPOAgent(nn.Module):

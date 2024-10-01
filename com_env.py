@@ -28,7 +28,7 @@ GRID_PRICE = 1  # $/kWh
 
 gym.register(
             id='CommunicationEnv-v0',
-            entry_point='test:CommunicationEnv',
+            entry_point='com_env:CommunicationEnv',
         )
 
 
