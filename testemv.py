@@ -13,7 +13,7 @@ observation = env.reset()
 # 运行一些简单的测试步骤
 for _ in range(10000):
     action = env.action_space.sample()  # 随机选择一个动作
-    observation, reward, done, info = env.step(action)
+    observation, reward, done, _, info = env.step(action)
     #print(f"观察: {observation}")
     #print(f"奖励: {reward}")
     #print(f"完成: {done}")

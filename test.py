@@ -15,15 +15,15 @@ import pygame
 import math
 import sys
 
-SCREEN_WIDTH = 800  # in pixels
-SCREEN_HEIGHT = 800  # in pixels
-TIME_SLOT = 10  # in second
+SCREEN_WIDTH = 800  # 像素
+SCREEN_HEIGHT = 800  # 像素
+TIME_SLOT = 10  # 秒
 SOLAR = [0, 0, 0, 0, 0, 0, 0.0582, 0.8613, 2.308, 3.2245, 3.8713, 4.3433, 4.4567, 4.0858,
-         3.3962, 2.4, 0.9011, 0.7908, 0.0613, 0, 0, 0, 0, 0]  # 24小时中,每个小时太阳能功率的数据 in kW
+         3.3962, 2.4, 0.9011, 0.7908, 0.0613, 0, 0, 0, 0, 0]  # 24小时中,每个小时太阳能功率的数据,单位:kW
 CHOSEN_HOUR = 1
-MAP_WIDTH = 2000  # in m
-MAP_HEIGHT = 2000  # in m
-GRID_PRICE = 1  # in $/kWh
+MAP_WIDTH = 2000  # 米
+MAP_HEIGHT = 2000  # 米
+GRID_PRICE = 1  # $/kWh
 
 
 gym.register(
@@ -75,19 +75,19 @@ class BaseStation(ABC):
         """
         self.bs_uuid: UUID = uuid1()
         self.position: Tuple[float, float] = position
-        """in (m, m)"""
+        """单位: (m, m)"""
         self.bandwidth: float = bandwidth
-        """in Hz"""
+        """单位: Hz"""
         self.frequency: float = frequency
-        """in GHz"""
+        """单位: GHz"""
         self.trans_power: float = trans_power
-        """in dBm"""
+        """单位: dBm"""
         self.height: float = height
-        """in m"""
+        """单位: m"""
         self.const_power: float = const_power
-        """in kW"""
+        """单位: kW"""
         self.connected_ues: set[UserEquipment] = set()
-        """connected user equipments"""
+        """已连接的用户设备"""
 
     @property
     def point(self):
@@ -125,7 +125,7 @@ class BaseStation(ABC):
         - ue_nums: 当前连接的用户设备数量。
 
         返回:
-        - 基站在指定时间片内的总能量消耗,单位为瓦时 (kWh)。
+        - 基站在指定时间片内的总能量消耗,单位为千瓦时 (kWh)。
         """
         ue_nums = len(self.connected_ues)
         trans_power_kw = 10 ** ((self.trans_power - 30) / 10) / 1000
@@ -269,7 +269,7 @@ class MicroBaseStation(BaseStation):
                          const_power)
         self.active: bool = True
         self.battery_level: float = 0
-        """in percentage"""
+        """单位: 百分比"""
         self.needed_energy: float = 0
         self.battery_capacity: float = battery_capacity
 
@@ -278,7 +278,7 @@ class MicroBaseStation(BaseStation):
         获取微型基站的能量信息。
 
         返回:
-        - extra_energy: 额外的能量,单位为瓦时 (kWh)。
+        - extra_energy: 额外的能量,单位为千瓦时 (kWh)。
         - battery_level: 微型基站的电池电量,单位为百分比。
         - needed_energy: 表示微型基站是否需要能量。
         """
@@ -356,7 +356,7 @@ class MicroBaseStation(BaseStation):
         - ue_nums: 当前连接的用户设备数量。
 
         返回:
-        - 基站在指定时间片内的总能量消耗,单位为瓦时 (Wh)。
+        - 基站在指定时间片内的总能量消耗,单位为千瓦时 (kWh)。
         """
         if self.active:
             return super().consume_energy
@@ -451,7 +451,7 @@ class CommunicationEnv(Env):
             station.reset()
 
         # 返回初始观察
-        return self._get_obs()
+        return self._get_obs(), {}
 
     def step(self, action):
         # 1. 处理 action
@@ -562,7 +562,7 @@ class CommunicationEnv(Env):
         if self.render_mode == 'human':
             self.render()
 
-        return obs, reward, done, info
+        return obs, reward, done, False, info
 
     def _get_obs(self):
         consumed_energy = [
