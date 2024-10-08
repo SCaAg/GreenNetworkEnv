@@ -1,4 +1,5 @@
 # Import necessary libraries
+import os
 import gymnasium as gym
 import numpy as np
 import torch
@@ -12,14 +13,15 @@ from com_env import CommunicationEnv
 
 # Define the PPO agent
 class PPOAgent(nn.Module):
-    def __init__(self, num_micro_stations, lr=3e-4):
+    def __init__(self, num_micro_stations, lr=1e-4):
         super(PPOAgent, self).__init__()
         input_dim = 4 * num_micro_stations  # Observation dimension
         action_dim = 2 * num_micro_stations  # Total number of binary actions
 
         # Shared layers
-        self.fc1 = nn.Linear(input_dim, 128)
-        self.fc2 = nn.Linear(128, 64)
+        self.fc1 = nn.Linear(input_dim, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 64)
 
         # Policy head
         self.policy_head = nn.Linear(64, action_dim)
@@ -34,6 +36,7 @@ class PPOAgent(nn.Module):
         # Shared layers
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
+        x = torch.relu(self.fc3(x))
 
         # Policy output (logits for Bernoulli distributions)
         logits = self.policy_head(x)
@@ -61,23 +64,32 @@ class PPOAgent(nn.Module):
         dist_entropy = m.entropy()
         return action_log_probs, torch.squeeze(state_value), dist_entropy
 
+    def infer_action(self, state):
+        self.eval()
+        with torch.no_grad():
+            logits, _ = self.forward(state)
+            probs = torch.sigmoid(logits)
+            # Deterministic action selection based on probabilities
+            action = (probs > 0.5).float()
+            return action.numpy()
+
 # Hyperparameters
-NUM_EPISODES = 1000
+NUM_EPISODES = 2000
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
-PPO_EPSILON = 0.2
+PPO_EPSILON = 0.1
 CRITIC_DISCOUNT = 0.5
 ENTROPY_BETA = 0.01
-BATCH_SIZE = 64
-PPO_EPOCHS = 10
+BATCH_SIZE = 128
+PPO_EPOCHS = 4
 MAX_GRAD_NORM = 0.5
 
 # Create environment
-env = gym.make('CommunicationEnv-v0',render_mode='human')
+env = gym.make('CommunicationEnv-v0', render_mode='human')
 num_micro_stations = len(env.micro_stations)
 
 # Initialize agent
-agent = PPOAgent(num_micro_stations)
+agent = PPOAgent(num_micro_stations, lr=1e-4)
 
 # Training loop
 episode_rewards = []
@@ -101,6 +113,11 @@ for episode in range(NUM_EPISODES):
     masks_list = []
 
     episode_reward = 0
+
+    # Initialize losses for this episode
+    episode_policy_loss = 0
+    episode_value_loss = 0
+    episode_entropy_loss = 0
 
     for step in range(999999):  # Limit the number of steps per episode
         # Select action
@@ -140,7 +157,7 @@ for episode in range(NUM_EPISODES):
     next_value = agent.forward(state)[1].detach()
     returns = []
     advantages = []
-    gae = 0
+    gae = torch.tensor([0.0])
     for i in reversed(range(len(rewards_list))):
         delta = rewards_list[i] + GAMMA * next_value * masks_list[i] - values_list[i]
         gae = delta + GAMMA * GAE_LAMBDA * masks_list[i] * gae
@@ -155,6 +172,9 @@ for episode in range(NUM_EPISODES):
     returns = torch.cat(returns).detach()
     advantages = torch.cat(advantages).detach()
     log_probs = torch.cat(log_probs_list).detach()
+
+    # Normalize advantages
+    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
     # Optimize policy and value network
     for _ in range(PPO_EPOCHS):
@@ -184,6 +204,11 @@ for episode in range(NUM_EPISODES):
             # Total loss
             loss = policy_loss + value_loss + entropy_loss
 
+            # Accumulate losses
+            episode_policy_loss += policy_loss.item()
+            episode_value_loss += value_loss.item()
+            episode_entropy_loss += entropy_loss.item()
+
             # Backpropagation
             agent.optimizer.zero_grad()
             loss.backward()
@@ -193,6 +218,12 @@ for episode in range(NUM_EPISODES):
     episode_rewards.append(episode_reward)
     print(f"Episode {episode + 1}/{NUM_EPISODES}, Reward: {episode_reward}")
 
+    # Save the model and losses every 100 episodes
+    if (episode + 1) % 100 == 0:
+        model_save_path = f'ppo_agent_{episode + 1}.pth'
+        torch.save(agent.state_dict(), model_save_path)
+        print(f"Model saved at episode {episode + 1}")
+
 # Plot the rewards
 plt.plot(episode_rewards)
 plt.xlabel('Episode')
@@ -200,5 +231,59 @@ plt.ylabel('Total Reward')
 plt.title('Training Progress')
 plt.show()
 
-# Close the environment
-env.close()
+# Inference function that loads a specific model
+def inference(env, model_path, num_episodes=10):
+    # Create the agent and load the model
+    num_micro_stations = len(env.micro_stations)
+    agent = PPOAgent(num_micro_stations)
+    agent.load_state_dict(torch.load(model_path,weights_only=True))
+    agent.eval()
+
+    for episode in range(num_episodes):
+        state_dict, _ = env.reset()
+        state = np.concatenate([
+            state_dict["consumed_energy"],
+            state_dict["needed_energy"],
+            state_dict["battery_level"],
+            state_dict["sbs_status"]
+        ])
+        state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+
+        episode_reward = 0
+
+        for step in range(999999):
+            action = agent.infer_action(state)
+            action_dict = {
+                "energy_allocation": action[0, :num_micro_stations].astype(int),
+                "sbs_status": action[0, num_micro_stations:].astype(int)
+            }
+            next_state_dict, reward, done, truncated, info = env.step(action_dict)
+            next_state = np.concatenate([
+                next_state_dict["consumed_energy"],
+                next_state_dict["needed_energy"],
+                next_state_dict["battery_level"],
+                next_state_dict["sbs_status"]
+            ])
+            next_state = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0)
+
+            state = next_state
+            episode_reward += reward
+
+            if done or truncated:
+                break
+
+        print(f"Inference Episode {episode + 1}, Reward: {episode_reward}")
+
+    env.close()
+
+
+# Usage example
+if __name__ == "__main__":
+    # Create the environment
+    env = gym.make('CommunicationEnv-v0', render_mode='human')
+
+    # Specify the model path
+    model_path = 'ppo_agent_1.pth'  # Replace with the path to your saved model
+
+    # Run inference
+    inference(env, model_path)
