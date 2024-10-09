@@ -85,7 +85,7 @@ PPO_EPOCHS = 4
 MAX_GRAD_NORM = 0.5
 
 # Create environment
-env = gym.make('CommunicationEnv-v0', render_mode='human')
+env = gym.make('CommunicationEnv-v0', render_mode='None')
 num_micro_stations = len(env.micro_stations)
 
 # Initialize agent
