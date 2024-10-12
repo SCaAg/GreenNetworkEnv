@@ -466,7 +466,7 @@ class CommunicationEnv(Env):
         ]
 
         # 2. 计算切换惩罚
-        switch_penalty = sum(old != new for old, new in zip(last_sbs_status, new_sbs_status))*1e-2
+        switch_penalty = sum(old != new for old, new in zip(last_sbs_status, new_sbs_status))*1e-6
 
         # 3. 更新基站状态
         for i, station in enumerate(self.micro_stations):

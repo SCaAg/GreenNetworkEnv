@@ -55,7 +55,7 @@ class PPOAgent(nn.Module):
             probs = torch.sigmoid(logits)
             m = Bernoulli(probs)
             action = m.sample()
-            return action.numpy(), m.log_prob(action).numpy()
+            return action.cpu().numpy(), m.log_prob(action).cpu().numpy()
     
     def evaluate_actions(self, state, action):
         logits, state_value = self.forward(state)
@@ -72,7 +72,7 @@ class PPOAgent(nn.Module):
             probs = torch.sigmoid(logits)
             # Deterministic action selection based on probabilities
             action = (probs > 0.5).float()
-            return action.numpy()
+            return action.cpu().numpy()
 
 # Hyperparameters
 NUM_EPISODES = 2000
@@ -105,12 +105,16 @@ def find_latest_model():
 
 # Training function
 def train():
+    # Check if CUDA is available
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
     # Create environment
     env = gym.make('CommunicationEnv-v0', render_mode='None')
     num_micro_stations = len(env.micro_stations)
 
-    # Initialize agent
-    agent = PPOAgent(num_micro_stations, lr=1e-4)
+    # Initialize agent and transfer to device (GPU or CPU)
+    agent = PPOAgent(num_micro_stations, lr=1e-4).to(device)
 
     # Check for existing models and load the latest one
     latest_model_path, starting_episode = find_latest_model()
@@ -136,7 +140,7 @@ def train():
             state_dict["battery_level"],
             state_dict["sbs_status"]
         ])
-        state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)  # Shape: [1, input_dim]
+        state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)  # Transfer state to device
 
         log_probs_list = []
         values_list = []
@@ -170,15 +174,15 @@ def train():
                 next_state_dict["battery_level"],
                 next_state_dict["sbs_status"]
             ])
-            next_state = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0)
+            next_state = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0).to(device)  # Transfer next state to device
 
             # Store transition
-            log_probs_list.append(torch.tensor(log_prob))
+            log_probs_list.append(torch.tensor(log_prob).to(device))
             values_list.append(agent.forward(state)[1])
-            rewards_list.append(torch.tensor([reward], dtype=torch.float32))
-            masks_list.append(torch.tensor([1 - done], dtype=torch.float32))
+            rewards_list.append(torch.tensor([reward], dtype=torch.float32).to(device))  # Transfer reward to device
+            masks_list.append(torch.tensor([1 - done], dtype=torch.float32).to(device))  # Transfer mask to device
             states_list.append(state)
-            actions_list.append(torch.tensor(action))
+            actions_list.append(torch.tensor(action).to(device))  # Transfer action to device
 
             state = next_state
             episode_reward += reward
@@ -190,7 +194,7 @@ def train():
         next_value = agent.forward(state)[1].detach()
         returns = []
         advantages = []
-        gae = torch.tensor([0.0])
+        gae = torch.tensor([0.0]).to(device)  # Initialize GAE on device
         for i in reversed(range(len(rewards_list))):
             delta = rewards_list[i] + GAMMA * next_value * masks_list[i] - values_list[i]
             gae = delta + GAMMA * GAE_LAMBDA * masks_list[i] * gae
@@ -266,4 +270,66 @@ def train():
 
 # Usage example
 if __name__ == "__main__":
-    train()
+    a=input("Press 1 to start training...")
+    if a=='1':
+        train()
+    else:   
+    # 检查是否有可用的GPU
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {device}")
+
+        # 加载已保存的模型
+        model_path = 'ppo_agent_1700.pth'
+        if os.path.exists(model_path):
+            print(f"Loading model from {model_path}...")
+            # 创建环境
+            env = gym.make('CommunicationEnv-v0', render_mode='human')  # 使用human模式渲染
+            num_micro_stations = len(env.micro_stations)
+            
+            # 初始化 agent 并移动到 device (GPU 或 CPU)
+            agent = PPOAgent(num_micro_stations, lr=1e-4).to(device)
+            agent.load_state_dict(torch.load(model_path, map_location=device))
+            agent.eval()  # 设置模型为评估模式
+
+            print("Model loaded successfully. Running inference for 1000 steps...")
+            state_dict, _ = env.reset()
+            state = np.concatenate([
+                state_dict["consumed_energy"],
+                state_dict["needed_energy"],
+                state_dict["battery_level"],
+                state_dict["sbs_status"]
+            ])
+            state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)  # 转换成 tensor 并移动到 GPU
+
+            total_reward = 0
+            for step in range(1000):
+                # 使用CUDA进行推理
+                action = agent.infer_action(state)
+                action_dict = {
+                    "energy_allocation": action[0, :num_micro_stations].astype(int),
+                    "sbs_status": action[0, num_micro_stations:].astype(int)
+                }
+                
+                # 与环境交互
+                next_state_dict, reward, done, truncated, info = env.step(action_dict)
+                
+                # 更新状态并移动到GPU
+                next_state = np.concatenate([
+                    next_state_dict["consumed_energy"],
+                    next_state_dict["needed_energy"],
+                    next_state_dict["battery_level"],
+                    next_state_dict["sbs_status"]
+                ])
+                next_state = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0).to(device)
+                state = next_state
+
+                total_reward += reward
+
+                if done or truncated:
+                    print(f"Episode ended at step {step} with reward {total_reward}")
+                    break
+
+            print(f"Total reward after 1000 steps: {total_reward}")
+        else:
+            print(f"Model {model_path} not found!")
+
