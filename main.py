@@ -110,7 +110,7 @@ def train():
     print(f"Using device: {device}")
 
     # Create environment
-    env = gym.make('CommunicationEnv-v0', render_mode='None')
+    env = gym.make('CommunicationEnv-v0', render_mode='human')
     num_micro_stations = len(env.micro_stations)
 
     # Initialize agent and transfer to device (GPU or CPU)
@@ -132,7 +132,10 @@ def train():
 
     for episode in range(starting_episode, total_episodes):
         current_episode = episode - starting_episode + 1  # Episode count for printing
-        state_dict, _ = env.reset()
+        if current_episode % 24 != 0:
+            state_dict, _ = env.reset(options="continue")
+        else:
+            state_dict, _ = env.reset()
         # Flatten and concatenate observation components
         state = np.concatenate([
             state_dict["consumed_energy"],
@@ -279,7 +282,7 @@ if __name__ == "__main__":
         print(f"Using device: {device}")
 
         # 加载已保存的模型
-        model_path = 'ppo_agent_1700.pth'
+        model_path = 'ppo_agent_100.pth'
         if os.path.exists(model_path):
             print(f"Loading model from {model_path}...")
             # 创建环境
@@ -327,7 +330,6 @@ if __name__ == "__main__":
 
                 if done or truncated:
                     print(f"Episode ended at step {step} with reward {total_reward}")
-                    break
 
             print(f"Total reward after 1000 steps: {total_reward}")
         else:

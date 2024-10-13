@@ -268,7 +268,7 @@ class MicroBaseStation(BaseStation):
                          height,
                          const_power)
         self.active: bool = True
-        self.battery_level:float = np.random.uniform(0.3, 1.0)
+        self.battery_level:float = np.random.uniform(0,0.03)
         """单位: 百分比"""
         self.needed_energy: float = 0
         self.battery_capacity: float = battery_capacity
@@ -333,7 +333,7 @@ class MicroBaseStation(BaseStation):
         """
         重置微型基站的状态,当前的实现是将电池电量随机设置为30%到100%之间,将需要能量的标志设置为False,将获得的能量设置为0,将活动状态设置为True。
         """
-        self.battery_level = np.random.uniform(0, 1)
+        self.battery_level = np.random.uniform(0, 0.03)
         self.needed_energy = 0
         self.active = True
 
@@ -416,6 +416,10 @@ class CommunicationEnv(Env):
             self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
             pygame.display.set_caption("通信环境")
             self.clock = pygame.time.Clock()
+            
+             # 初始化字体
+            pygame.font.init()
+            self.font = pygame.font.SysFont(None, 24)
 
             # 用于将位置映射到屏幕坐标
             self.scale_x = SCREEN_WIDTH / MAP_WIDTH
@@ -437,7 +441,7 @@ class CommunicationEnv(Env):
                 micro_screen_pos = self._map_to_screen(micro_pos)
                 pygame.draw.circle(self.background, (0, 0, 255), micro_screen_pos, 5)  # 半径5像素
 
-    def reset(self, seed=None, options=None):
+    def reset(self, seed=None, options="None"):
         super().reset(seed=seed)
         global CHOSEN_HOUR  # 告诉Python这是一个全局变量
         CHOSEN_HOUR = CHOSEN_HOUR+1 if CHOSEN_HOUR < 23 else 0
@@ -448,9 +452,10 @@ class CommunicationEnv(Env):
         for ue in self.ues.values():
             ue.reset()
 
-        # 重置微基站
-        for station in self.stations.values():
-            station.reset()
+        if options == "None":
+            # 重置微基站
+            for station in self.stations.values():
+                station.reset()
 
         # 返回初始观察
         return self._get_obs(), {}
@@ -483,24 +488,61 @@ class CommunicationEnv(Env):
 
         # 5. 将多余的能源分配给需要能源的基站
         if needed_energy_stations:
-            # 这段代码处理多余能源的分配逻辑
-            total_extra_energy_original = total_extra_energy
-            # 计算所有需要能源的基站的总需求量
-            total_needed_energy = -sum(station.needed_energy for station in needed_energy_stations)
-            # 遍历每个需要能源的基站
-            for station in needed_energy_stations:
-                # 按照基站需求的比例分配能源
-                # 分配的能源 = min(按比例分配的能源, 基站实际需要的能源)
-                energy_to_allocate = min(
-                    (-station.needed_energy) / total_needed_energy * total_extra_energy_original,
-                    -station.needed_energy
-                )
+            if total_extra_energy > 0:
+                # 这段代码处理多余能源的分配逻辑
+                total_extra_energy_original = total_extra_energy
+                # 计算所有需要能源的基站的总需求量
+                total_needed_energy = -sum(station.needed_energy for station in needed_energy_stations)
+                # 遍历每个需要能源的基站
+                for station in needed_energy_stations:
+                    # 按照基站需求的比例分配能源
+                    # 分配的能源 = min(按比例分配的能源, 基站实际需要的能源)
+                    energy_to_allocate = min(
+                        (-station.needed_energy) / total_needed_energy * total_extra_energy_original,
+                        -station.needed_energy
+                    )
+                    
+                    # 将分配的能源给到基站,并获取剩余未使用的能源
+                    remaining_extra_energy = station.get_energy(energy_to_allocate)
+                    
+                    # 更新总的多余能源,减去已分配的能源,加上未使用的能源
+                    total_extra_energy -= (energy_to_allocate - remaining_extra_energy)
+            else:
+                # No extra energy, take from donors (stations where energy_allocation == 1)
+                donor_contributions = []
+                total_donated_energy = 0
+                for i, station in enumerate(self.micro_stations):
+                    if energy_allocation[i] == 1 and station.battery_level > 0:
+                        # Each donor station contributes 25% of its battery energy
+                        contribution = station.battery_level * 0.25 * station.battery_capacity
+                        donor_contributions.append((station, contribution))
+                        total_donated_energy += contribution
+                if total_donated_energy > 0:
+                    # Distribute the donated energy to needed_energy_stations
+                    total_donated_energy_original = total_donated_energy
+                    total_needed_energy = -sum(station.needed_energy for station in needed_energy_stations)
+                    for station in needed_energy_stations:
+                        energy_to_allocate = min(
+                            (-station.needed_energy) / total_needed_energy * total_donated_energy_original,
+                            -station.needed_energy
+                        )
+                        # The station gets energy
+                        remaining_extra_energy = station.get_energy(energy_to_allocate)
+                        # Adjust total_donated_energy
+                        total_donated_energy -= (energy_to_allocate - remaining_extra_energy)
+                    # Adjust donors' battery levels
+                    energy_used = total_donated_energy_original - total_donated_energy
+                    for donor_station, contribution in donor_contributions:
+                        proportion = contribution / total_donated_energy_original
+                        actual_contribution = proportion * energy_used
+                        battery_level_reduction = actual_contribution / donor_station.battery_capacity
+                        donor_station.battery_level -= battery_level_reduction
+                        donor_station.battery_level = max(0, donor_station.battery_level)
+                else: 
+                        total_extra_energy = sum(station.needed_energy for station in needed_energy_stations)
+                    
+
                 
-                # 将分配的能源给到基站,并获取剩余未使用的能源
-                remaining_extra_energy = station.get_energy(energy_to_allocate)
-                
-                # 更新总的多余能源,减去已分配的能源,加上未使用的能源
-                total_extra_energy -= (energy_to_allocate - remaining_extra_energy)
                 
 
 
@@ -605,33 +647,43 @@ class CommunicationEnv(Env):
         # 将背景绘制到屏幕上
         self.screen.blit(self.background, (0, 0))
 
-        # 如果微基站的活动状态发生变化，需要更新它们：
+        # 1. 显示当前的小时数
+        hour_text = f"Hour: {CHOSEN_HOUR}"
+        hour_surface = self.font.render(hour_text, True, (0, 0, 0))
+        hour_rect = hour_surface.get_rect()
+        hour_rect.topright = (SCREEN_WIDTH - 10, 10)
+        self.screen.blit(hour_surface, hour_rect)
+
+
+        # 3. 绘制微基站，显示电池电量和累计耗电量
         for station in self.micro_stations:
             micro_pos = station.position
             micro_screen_pos = self._map_to_screen(micro_pos)
             if station.active:
-                # 在背景上绘制活动的基站
                 pygame.draw.circle(self.screen, (0, 0, 255), micro_screen_pos, 5)
             else:
-                # 可选地，以不同方式绘制非活动基站或不绘制
-                pygame.draw.circle(self.screen, (200, 200, 200), micro_screen_pos, 5)  # 非活动基站为浅灰色
+                pygame.draw.circle(self.screen, (200, 200, 200), micro_screen_pos, 5)
+            
+            # 显示电池电量百分比
+            battery_percentage = station.battery_level * 100
+            battery_text = f"{battery_percentage:.1f}%"
+            battery_surface = self.font.render(battery_text, True, (0, 0, 0))
+            battery_rect = battery_surface.get_rect()
+            battery_rect.topleft = (micro_screen_pos[0] + 10, micro_screen_pos[1] - 10)
+            self.screen.blit(battery_surface, battery_rect)
 
-        # 将UE绘制为星形（动态元素）
+        # 绘制用户设备和连接
         for ue in self.ues.values():
             ue_pos = ue.position
             ue_screen_pos = self._map_to_screen(ue_pos)
-            self._draw_star(ue_screen_pos, 5, (0, 255, 0))  # 大小为5像素，颜色为绿色
-
-            # 绘制UE和其连接基站之间的线
+            self._draw_star(ue_screen_pos, 5, (0, 255, 0))
             for station in self.stations.values():
                 if ue in station.connected_ues:
                     station_pos = self._map_to_screen(station.position)
-                    pygame.draw.line(self.screen, (255, 0, 0), ue_screen_pos, station_pos, 1)  # 红色线，宽度为1像素
+                    pygame.draw.line(self.screen, (255, 0, 0), ue_screen_pos, station_pos, 1)
 
         # 更新显示
         pygame.display.flip()
-
-        # 限制帧率为60帧每秒
         self.clock.tick(60)
 
 
